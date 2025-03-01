@@ -1,24 +1,31 @@
+import os
 import paho.mqtt.client as mqtt
+import requests
+from dotenv import load_dotenv
 
-# Define event callbacks
+# Load API key securely
+load_dotenv()
+API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={API_KEY}"  
+
 def on_connect(client, userdata, flags, rc):
-    print(f"Connected with result code {rc}")
-    # Subscribe inside on_connect to automatically re-subscribe on reconnect
-    if rc == 0:
-        client.subscribe("your/topic/here")
+    print("Connected with result code " + str(rc))
+    client.subscribe("smartplanter/user_query")
 
 def on_message(client, userdata, msg):
-    print(f"Received message on {msg.topic}: {msg.payload.decode()}")
+    if msg.topic == "smartplanter/user_query":
+        query = msg.payload.decode()
+        response = ask_gemini(query)
+        client.publish("smartplanter/user_response", response)
 
-def on_subscribe(client, userdata, mid, granted_qos):
-    print("Subscribed: " + str(mid) + " " + str(granted_qos))
+def ask_gemini(query):
+    headers = {'Authorization': f'Bearer {"GEMINI_API_KEY"}'}
+    response = requests.post(GEMINI_API_URL, json={'query': query}, headers=headers)
+    if response.status_code == 200:
+        return response.json().get('answers', [{}])[0].get('answer', 'No answer found.')
+    else:
+        return "Error in getting response from Gemini."
 
-# Setup MQTT client and assign event callbacks
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_message = on_message
-client.on_subscribe = on_subscribe
+client = mqtt
 
-# Connect and start the loop
-client.connect("localhost", 1883, 60)
-client.loop_start()
+
