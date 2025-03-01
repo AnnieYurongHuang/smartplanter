@@ -1,33 +1,48 @@
 import streamlit as st
 import paho.mqtt.client as mqtt
+import datetime
+from dotenv import load_dotenv
+import os
+import requests
+import json
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Retrieve API key from environment variables
+API_KEY = os.getenv('GEMINI_API_KEY')
 
 # MQTT setup
 def on_connect(client, userdata, flags, rc):
     print("Connected with result code "+str(rc))
-    client.subscribe("smartplanter/user_response")
     client.subscribe("smartplanter/temperature")
     client.subscribe("smartplanter/humidity")
 
 def on_message(client, userdata, msg):
     print(f"Received message on topic {msg.topic}")
-    if msg.topic == "smartplanter/user_response":
-        st.session_state['response'] = msg.payload.decode()
-    elif msg.topic == "smartplanter/temperature":
-        st.session_state['temperature'] = float(msg.payload.decode())
-        update_history('temperature', st.session_state['temperature'])
+    if msg.topic == "smartplanter/temperature":
+        temp = float(msg.payload.decode())
+        print(f"Received temperature {temp}")
+        update_history('temperature', temp)
     elif msg.topic == "smartplanter/humidity":
-        st.session_state['humidity'] = float(msg.payload.decode())
-        update_history('humidity', st.session_state['humidity'])
+        humidity = float(msg.payload.decode())
+        print(f"Received humidity {humidity}")
+        update_history('humidity', humidity)
 
 def update_history(key, value):
     if key not in st.session_state:
         st.session_state[key] = []
-    st.session_state[key].append(value)
+    st.session_state[key].append((datetime.datetime.now(), value))
+    # # # st.session_state[key] = list(st.session_state[key])
+    # # st.session_state[key] = [1.234]
+    # st.session_state = {'temperature': 1.234, 'humidity': 4.321}
+    print(f"session_state[{key}]: {st.session_state[key]}")
+
 
 client = mqtt.Client()
 client.on_connect = on_connect
 client.on_message = on_message
-client.connect("localhost", 1883)
+client.connect("localhost", 1883, 60)
 client.loop_start()
 
 # Main UI
@@ -39,8 +54,19 @@ with tab1:
     st.header("Ask About Plant Care")
     query = st.text_input("What is going on with your plant today?")
     if st.button("Submit"):
-        client.publish("smartplanter/user_query", query)
         st.session_state['response'] = "Waiting for response..."
+        # Create a prompt from the MQTT message
+        prompt = f"Explain: {query}"
+        # Call Gemini API
+        response = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={API_KEY}", json={
+            "contents": [{
+            "parts":[{"text": prompt}]
+            }]})
+        # Print response
+        response_data = json.loads(response.text)
+        text_response = response_data['candidates'][0]['content']['parts'][0]['text']
+        print("Gemini Response:", text_response)
+        st.session_state['response'] = text_response
     
     if 'response' in st.session_state:
         st.text_area("Response", st.session_state['response'], height=150)
@@ -54,7 +80,9 @@ with tab2:
 
 with tab3:
     st.header("Plant Status")
+    print('hello world')
     if 'temperature' in st.session_state and 'humidity' in st.session_state:
+        print("Updating plant status...")
         # Assuming optimal ranges (you can adjust these ranges)
         optimal_temp = (18, 25)
         optimal_humidity = (40, 60)
